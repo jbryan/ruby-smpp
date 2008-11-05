@@ -3,6 +3,7 @@ require 'iconv'
 require 'scanf'
 require 'monitor'
 require 'eventmachine'
+require 'activesupport'
 
 module Smpp
   class InvalidStateException < Exception; end
@@ -110,28 +111,41 @@ module Smpp
     end
 
     # process common PDUs
-    # returns true if no further processing necessary
     def process_pdu(pdu)      
-      case pdu
-      when Pdu::EnquireLinkResponse
-        # nop
-      when Pdu::EnquireLink
-        write_pdu(Pdu::EnquireLinkResponse.new(pdu.sequence_number))
-      when Pdu::Unbind
-        @state = :unbound
-        write_pdu(Pdu::UnbindResponse.new(pdu.sequence_number, Pdu::Base::ESME_ROK))
-        EventMachine::stop_event_loop
-      when Pdu::UnbindResponse      
-        logger.info "Unbound OK. Closing connection."
-        close_connection
-      when Pdu::GenericNack
-        logger.warn "Received NACK! (error code #{pdu.error_code})."
-        # we don't take this lightly: stop the event loop
-        EventMachine::stop_event_loop
+      method_name = "process_" + pdu.class.name.demodulize.underscore 
+
+      logger.debug "Trying to pass new pdu to #{method_name}."
+      if respond_to? method_name
+        send method_name, pdu
       else
         logger.warn "(#{self.class.name}) Received unexpected PDU: #{pdu.to_human}."
         EventMachine::stop_event_loop                
       end
+    end
+
+    def process_enquire_link_response(pdu)
+      # nop
+    end
+
+    def process_enquire_link(pdu)
+      write_pdu(Pdu::EnquireLinkResponse.new(pdu.sequence_number))
+    end
+
+    def process_unbind(pdu)
+      @state = :unbound
+      write_pdu(Pdu::UnbindResponse.new(pdu.sequence_number, Pdu::Base::ESME_ROK))
+      EventMachine::stop_event_loop
+    end
+
+    def process_unbind_response(pdu)
+      logger.info "Unbound OK. Closing connection."
+      close_connection
+    end
+
+    def process_generic_nack(pdu)
+      logger.warn "Received NACK! (error code #{pdu.error_code})."
+      # we don't take this lightly: stop the event loop
+      EventMachine::stop_event_loop
     end
     
     private  

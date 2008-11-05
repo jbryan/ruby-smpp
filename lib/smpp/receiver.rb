@@ -23,49 +23,47 @@ class Smpp::Receiver < Smpp::Base
     raise
   end
 
-  # a PDU is received
-  def process_pdu(pdu)
-    case pdu
-    when Pdu::DeliverSm
-      write_pdu(Pdu::DeliverSmResponse.new(pdu.sequence_number))
-      logger.debug "ESM CLASS #{pdu.esm_class}"
-      if pdu.esm_class != 4
-        # MO message; invoke MO proc
-        @mo_proc.call(pdu.source_addr, pdu.destination_addr, pdu.short_message)
-      else
-        # Invoke DR proc (let the owner of the block do the mapping from msg_reference to mt_id)
-        @dr_proc.call(pdu.msg_reference.to_s, pdu.stat)
-      end     
-    when Pdu::BindReceiverResponse
-      case pdu.command_status
-      when Pdu::Base::ESME_ROK
-        logger.debug "Bound OK."
-        @state = :bound
-      when Pdu::Base::ESME_RINVPASWD
-        logger.warn "Invalid password."
-        EventMachine::stop_event_loop
-      when Pdu::Base::ESME_RINVSYSID
-        logger.warn "Invalid system id."
-        EventMachine::stop_event_loop
-      else
-        logger.warn "Unexpected BindReceiverResponse. Command status: #{pdu.command_status}"
-        EventMachine::stop_event_loop
-      end
-    when Pdu::SubmitSmResponse
-      mt_message_id = @ack_ids[pdu.sequence_number]
-      if !mt_message_id
-        raise "Got SubmitSmResponse for unknown sequence_number: #{pdu.sequence_number}"
-      end
-      if pdu.command_status != Pdu::Base::ESME_ROK
-        logger.error "Error status in SubmitSmResponse: #{pdu.command_status}"
-      else
-        logger.info "Got OK SubmitSmResponse (#{pdu.message_id} -> #{mt_message_id})"
-      end
-      # Now we got the SMSC message id; create pending delivery report
-      @pdr_storage[pdu.message_id] = mt_message_id
+  def process_deliver_sm(pdu)
+    write_pdu(Pdu::DeliverSmResponse.new(pdu.sequence_number))
+    logger.debug "ESM CLASS #{pdu.esm_class}"
+    if pdu.esm_class != 4
+      # MO message; invoke MO proc
+      @mo_proc.call(pdu.source_addr, pdu.destination_addr, pdu.short_message)
     else
-      super
-    end 
+      # Invoke DR proc (let the owner of the block do the mapping from msg_reference to mt_id)
+      @dr_proc.call(pdu.msg_reference.to_s, pdu.stat)
+    end     
+  end
+
+  def process_bind_receiver_response(pdu)
+    case pdu.command_status
+    when Pdu::Base::ESME_ROK
+      logger.debug "Bound OK."
+      @state = :bound
+    when Pdu::Base::ESME_RINVPASWD
+      logger.warn "Invalid password."
+      EventMachine::stop_event_loop
+    when Pdu::Base::ESME_RINVSYSID
+      logger.warn "Invalid system id."
+      EventMachine::stop_event_loop
+    else
+      logger.warn "Unexpected BindReceiverResponse. Command status: #{pdu.command_status}"
+      EventMachine::stop_event_loop
+    end
+  end
+
+  def process_submit_sm_response(pdu)
+    mt_message_id = @ack_ids[pdu.sequence_number]
+    if !mt_message_id
+      raise "Got SubmitSmResponse for unknown sequence_number: #{pdu.sequence_number}"
+    end
+    if pdu.command_status != Pdu::Base::ESME_ROK
+      logger.error "Error status in SubmitSmResponse: #{pdu.command_status}"
+    else
+      logger.info "Got OK SubmitSmResponse (#{pdu.message_id} -> #{mt_message_id})"
+    end
+    # Now we got the SMSC message id; create pending delivery report
+    @pdr_storage[pdu.message_id] = mt_message_id
   end
 
   # Send BindReceiverResponse PDU.

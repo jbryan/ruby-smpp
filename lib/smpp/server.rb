@@ -2,16 +2,19 @@
 # out MOs to the client when set up
 class Smpp::Server < Smpp::Base
 
+  @@next_id_num = [Time.now.to_i]
+  # Add monitor to sequence counter for thread safety
+  @@next_id_num.extend(MonitorMixin)
+
   attr_accessor :bind_status
 
   # Expects a config hash, 
   # a proc to invoke for incoming (MO) messages,
   # a proc to invoke for delivery reports,
   # and optionally a hash-like storage for pending delivery reports.
-  def initialize(config, received_messages = [], sent_messages = [])
+  def initialize(config, sent_messages = {})
     super(config)
     @state = :unbound
-    @received_messages = received_messages
     @sent_messages = sent_messages
     
     # Array of un-acked MT message IDs indexed by sequence number.
@@ -139,21 +142,27 @@ class Smpp::Server < Smpp::Base
     # Must respond to SubmitSm requests with the same sequence number
     m_seq = pdu.sequence_number
     # add the id to the list of ids of which we're awaiting acknowledgement
-    @received_messages << m_seq
+    message_id = next_message_id
+    response = Pdu::Base::ESME_ROK 
 
-    # In theory this is where the MC would actually do something useful with
-    # the PDU - eg send it on to the network. We'd check if it worked and
-    # send a failure PDU if it failed.
+    #this proc is used to do the dirty work and deal with the mt message
     #
-    # Given this is a dummy MC, that's not necessary, so all our responses
-    # will be OK.
+    if (@config[:receive_sm_proc].respond_to? :handle_submit_sm) 
+      response = @config[:receive_sm_proc].send :handle_submit_sm, pdu, message_id
+    end
 
     # so respond with a successful response
-    pdu = Pdu::SubmitSmResponse.new(m_seq, Pdu::Base::ESME_ROK, message_id = '' )
+    pdu = Pdu::SubmitSmResponse.new(m_seq, response, message_id )
     write_pdu pdu
-    @received_messages.delete m_seq
     
     logger.info "Received submit sm message: #{m_seq}"
+  end
+
+  def next_message_id 
+    @@next_id_num.synchronize do
+      @@next_id_num[0] += 1
+    end
+    "msgnum_" + @@next_id_num[0].to_s
   end
 
   #######################################################################
@@ -196,29 +205,28 @@ class Smpp::Server < Smpp::Base
   end
 
 
-  # a PDU is received
-  # these pdus are all responses to a message sent by the client and require
-  # their own special response
-  def process_pdu(pdu)
-    case pdu
-    # client has asked to set up a connection
-    when Pdu::BindTransmitter
-      bind_session(pdu, :transmitter)
-    when Pdu::BindReceiver
-      bind_session(pdu, :receiver)
-    when Pdu::BindTransceiver
-      bind_session(pdu, :transceiver)
-    # client has acknowledged receipt of a message we sent to them
-    when Pdu::DeliverSmResponse
-      accept_deliver_sm_response(pdu) # acknowledge its sending
-
-    # client has asked for a message to be sent
-    when Pdu::SubmitSm
-      receive_sm(pdu)
-    else
-      # for generic functions or default fallback
-      super(pdu)
-    end 
+  # client has asked to set up a connection
+  def process_bind_transmitter(pdu)
+    bind_session(pdu, :transmitter)
   end
+
+  def process_bind_receiver(pdu)
+    bind_session(pdu, :receiver)
+  end
+
+  def process_bind_transceiver(pdu)
+    bind_session(pdu, :transceiver)
+  end
+
+  # client has acknowledged receipt of a message we sent to them
+  def process_deliver_sm_response(pdu)
+    accept_deliver_sm_response(pdu) # acknowledge its sending
+  end
+
+  # client has asked for a message to be sent
+  def process_submit_sm(pdu)
+    receive_sm(pdu)
+  end
+
  
 end
