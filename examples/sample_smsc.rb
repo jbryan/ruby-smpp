@@ -3,7 +3,7 @@
 # Sample SMPP SMS Gateway. 
 
 require 'rubygems'
-gem 'ruby-smpp'
+#gem 'ruby-smpp'
 require 'smpp'
 require 'smpp/server'
 
@@ -13,50 +13,37 @@ Smpp::Base.logger = Logger.new('smsc.log')
 # the transceiver
 $tx = nil
 
-# We use EventMachine to receive keyboard input (which we send as MT messages).
-# A "real" gateway would probably get its MTs from a message queue instead.
-module KeyboardHandler
-  include EventMachine::Protocols::LineText2
-
-  def receive_line(data)
-    puts "Sending MO: #{data}"
-    from = '1111111111'
-    to = '1111111112'       
-    $tx.send_mo(from, to, data)
-
-
-# if you want to send messages with custom options, uncomment below code, this configuration allows the sender ID to be alpha numeric
-#    $tx.send_mt(123, "RubySmpp", to, "Testing RubySmpp as sender id",{
-#    :source_addr_ton=> 5,
-#	:service_type => 1,
-#	:source_addr_ton => 5,
-#	:source_addr_npi => 0 ,
-#	:dest_addr_ton => 2, 
-#	:dest_addr_npi => 1, 
-#	:esm_class => 3 ,
-#	:protocol_id => 0, 
-#	:priority_flag => 0,
-#	:schedule_delivery_time => nil,
-#	:validity_period => nil,
-#	:registered_delivery=> 1,
-#	:replace_if_present_flag => 0,
-#	:data_coding => 0,
-#	:sm_default_msg_id => 0 
-#     })   
-
-# if you want to send message to multiple destinations , uncomment below code
-#    $tx.send_multi_mt(123, from, ["919900000001","919900000002","919900000003"], "I am echoing that ruby-smpp is great")  
-    prompt
-  end
-end
-
-def prompt
-  print "Enter MO body: "
-  $stdout.flush
-end
 
 def logger
   Smpp::Base.logger
+end
+
+class MySmscServer < Smpp::Server
+  def process_submit_sm(pdu)
+    id = super(pdu)
+    #if a delivery report is required
+    if (pdu.registered_delivery == 1)
+      #randomly pick a status
+      stat = [
+        "DELIVERED",
+        "UNDELIVERABLE",
+        "ACCEPTED",
+        "REJECTED"
+      ].rand
+
+      delivered = (stat == "DELIVERED") ? 1 : 0
+      submit_date =  Time.now.strftime("%y%m%d%H%M")
+              
+      EventMachine::add_timer( rand(10) ) do
+        msg = "id:#{id} sub:1 dlvrd:#{delivered} submit date:#{submit_date} " +
+              "done date:#{Time.now.strftime("%y%m%d%H%M")} stat:#{stat} err: " +
+              "Text:#{pdu.short_message[0..20]}"
+        deliver_sm(pdu.destination_addr, pdu.source_addr, msg, { :esm_class => 4 })
+      end
+
+    end
+    Smpp::Pdu::Base::ESME_ROK
+  end
 end
 
 def start(config)
@@ -64,10 +51,10 @@ def start(config)
   # Run EventMachine in loop so we can reconnect when the SMSC drops our connection.
   loop do
     EventMachine::run do             
-      $tx = EventMachine::start_server(
+      EventMachine::start_server(
           config[:host], 
           config[:port], 
-          Smpp::Server,
+          MySmscServer,
           config
           )       
     end
@@ -95,7 +82,8 @@ begin
     :destination_npi => 1,
     :source_address_range => '',
     :destination_address_range => '',
-    :enquire_link_delay_secs => 10
+    :enquire_link_delay_secs => 10,
+    :receive_sm_proc => proc { |pdu, id| generate_delivery_reports(pdu, id) }
   }
   start(config)  
 rescue Exception => ex

@@ -12,7 +12,7 @@ class Smpp::Server < Smpp::Base
   # a proc to invoke for incoming (MO) messages,
   # a proc to invoke for delivery reports,
   # and optionally a hash-like storage for pending delivery reports.
-  def initialize(config, sent_messages = {})
+  def initialize(config, sent_messages = [])
     super(config)
     @state = :unbound
     @sent_messages = sent_messages
@@ -133,7 +133,7 @@ class Smpp::Server < Smpp::Base
   #######################################################################
   # Receive an incoming message to send to the network and respond
   # REVISIT = just a stub
-  def receive_sm(pdu)
+  def receive_sm(pdu,response = Pdu::Base::ESME_ROK)
     # TODO: probably should not "raise" here - what's better?
     raise IOError, "Connection not bound." if unbound?
     # Doesn't matter if it's a TX/RX/TRX, have to send a SubmitSmResponse:
@@ -143,19 +143,16 @@ class Smpp::Server < Smpp::Base
     m_seq = pdu.sequence_number
     # add the id to the list of ids of which we're awaiting acknowledgement
     message_id = next_message_id
-    response = Pdu::Base::ESME_ROK 
-
-    #this proc is used to do the dirty work and deal with the mt message
-    #
-    if (@config[:receive_sm_proc].respond_to? :handle_submit_sm) 
-      response = @config[:receive_sm_proc].send :handle_submit_sm, pdu, message_id
-    end
 
     # so respond with a successful response
     pdu = Pdu::SubmitSmResponse.new(m_seq, response, message_id )
     write_pdu pdu
     
     logger.info "Received submit sm message: #{m_seq}"
+
+    #return the message_id to be used by subclasses that may want 
+    #to do something more with it.
+    message_id
   end
 
   def next_message_id 
@@ -181,6 +178,7 @@ class Smpp::Server < Smpp::Base
     
     # submit the given message
     new_pdu = Pdu::DeliverSm.new(from, to, message, config)
+    m_seq = new_pdu.sequence_number
     write_pdu(new_pdu)
     # add the id to the list of ids of which we're awaiting acknowledgement
     @sent_messages << m_seq
