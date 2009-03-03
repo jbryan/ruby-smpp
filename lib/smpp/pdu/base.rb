@@ -61,7 +61,7 @@ module Smpp::Pdu
     CANCEL_SM_RESP        = 0X80000008 
     ENQUIRE_LINK          = 0X00000015 
     ENQUIRE_LINK_RESP     = 0X80000015
-    SUBMIT_MULTI	  = 0X00000021
+    SUBMIT_MULTI          = 0X00000021
     SUBMIT_MULTI_RESP     = 0X80000021
     # PDU sequence number. 
     @@seq = [Time.now.to_i]
@@ -104,8 +104,8 @@ module Smpp::Pdu
     end
 
     def Base.next_sequence_number
-      @@seq.synchronize do 
-        (@@seq[0] += 1) % 512
+      @@seq.synchronize do
+        ((@@seq[0] += 1) % 0x7FFFFFFE) + 1
       end
     end
 
@@ -129,7 +129,7 @@ module Smpp::Pdu
       if @@cmd_map[cmd]
         @@cmd_map[cmd].from_wire_data(seq, status, body)
       else
-        Smpp::Base.logger.error "Unknown PDU: 0x#{cmd.to_s(16)}"
+        Smpp::Base.logger.error "Unknown PDU: #{"0x%08x" % cmd}"
         return nil
       end
     end
