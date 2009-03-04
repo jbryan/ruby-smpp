@@ -63,6 +63,7 @@ class Smpp::Pdu::DeliverSm < Smpp::Pdu::Base
     options[:sm_default_msg_id],
     options[:sm_length], 
     remainder = body.unpack('Z*CCZ*CCZ*CCCZ*Z*CCCCCa*')    
+    Smpp::Base.logger.debug "DeliverSM with source_addr=#{source_addr}, destination_addr=#{destination_addr}"    
 
     if options[:sm_length] == 0
       short_message = ''
